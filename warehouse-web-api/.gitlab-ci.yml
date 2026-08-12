@@ -1,0 +1,60 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  SERVICE_NAME: 'warehouse-web-api'
+  COMPOSE_FILE: '/home/ubuntu/Docker/docker-compose.yaml'
+  IMAGE_TAR: 'warehouse_web_api_image.tar' 
+
+# ==================== BUILD ====================
+build:
+  stage: build
+  tags:
+    - shell
+  script:
+    - echo ">>> Đang build Docker image BE..."
+    - docker build --no-cache --pull=false -t ${SERVICE_NAME}:latest .
+    - echo ">>> Đang đóng gói Image thành file TAR..."
+    - docker save -o ${IMAGE_TAR} ${SERVICE_NAME}:latest
+    - echo ">>> Build BE thành công!"
+  artifacts:
+    paths:
+      - ${IMAGE_TAR}
+    expire_in: 1h
+  only:
+    - main
+
+# ==================== DEPLOY ====================
+deploy:
+  stage: deploy
+  tags:
+    - shell
+  dependencies:
+    - build
+  script:
+    - echo ">>> KIỂM TRA MÔI TRƯỜNG SERVER VÀ DOCKER..."
+    - echo "IP Server đang chạy:" && hostname -I
+    - echo "Tài khoản đang thực thi:" && whoami
+    - echo "Phiên bản Docker đang dùng:" && which docker
+    - echo "Danh sách Docker Context:" && docker context ls
+    
+    # -------- BƯỚC NẠP FILE TAR BỊ THIẾU --------
+    - echo ">>> Đang nạp (load) Image mới từ Artifact vào hệ thống..."
+    - docker load -i ${IMAGE_TAR}
+    # --------------------------------------------
+    
+    - echo ">>> Kiểm tra docker-compose config..."
+    - docker compose -f ${COMPOSE_FILE} config -q
+    
+    - echo ">>> Đang deploy ${SERVICE_NAME}..."
+    - cd /home/ubuntu/Docker && docker compose up -d --force-recreate --no-build --pull=never ${SERVICE_NAME}
+    
+    - echo ">>> Đang dọn dẹp các Image rác và file TAR..."
+    - rm -f ${IMAGE_TAR} || true
+    - docker image prune -f
+    
+    - echo ">>> Deploy BE xong!"
+  retry: 2
+  only:
+    - main
