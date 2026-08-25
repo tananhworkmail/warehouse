@@ -1,0 +1,588 @@
+# Prompt cho Codex – Đọc cân trực tiếp từ COM bằng Web Serial API
+
+Tập trung vào trang:
+
+`ScanInKTP.vue`
+
+Mục tiêu task này chỉ là:
+
+> Đọc trọng lượng thật từ cân Jadever JWI-700W qua COM port trực tiếp trong browser và hiển thị realtime trên trang Scan In KTP.
+
+Không tạo Local Agent.
+
+Không tạo Windows Service.
+
+Không sửa backend nếu không cần.
+
+Không ghi YWCP.
+
+Không kiểm tra điều kiện cân.
+
+Không kiểm tra sản lượng.
+
+---
+
+## Thiết bị
+
+Cân:
+
+`Jadever JWI-700W`
+
+Windows nhận:
+
+`Prolific USB-to-Serial Comm Port (COM4)`
+
+Đã test COM thành công.
+
+Output thực tế:
+
+```text
+T.W. :  +   0.00 kg
+N.W. :  +   7.87 kg
+G.W. :  +   7.87 kg
+```
+
+ERP cũ lấy dòng `G.W.` làm trọng lượng thực tế.
+
+Ví dụ:
+
+```text
+G.W. :  +   7.87 kg
+```
+
+phải parse thành:
+
+```text
+7.87
+```
+
+đơn vị:
+
+```text
+kg
+```
+
+---
+
+# 1. Dùng Web Serial API trực tiếp
+
+Trong frontend sử dụng:
+
+```js
+navigator.serial
+```
+
+Không dùng backend đọc COM.
+
+Không dùng agent trung gian.
+
+Luồng:
+
+```text
+Jadever JWI-700W
+→ USB Serial
+→ COM4
+→ Chrome / Edge
+→ ScanInKTP.vue
+```
+
+---
+
+# 2. Nút kết nối cân
+
+Trên `ScanInKTP.vue` tạo nút:
+
+```text
+Kết nối cân
+```
+
+Khi người dùng click:
+
+```js
+navigator.serial.requestPort()
+```
+
+Browser sẽ mở hộp thoại để người dùng chọn thiết bị:
+
+```text
+Prolific USB-to-Serial Comm Port
+```
+
+Sau khi chọn:
+
+```js
+port.open({
+  baudRate: 9600,
+  dataBits: 8,
+  stopBits: 1,
+  parity: 'none',
+  flowControl: 'none'
+})
+```
+
+Nếu kết nối thành công:
+
+```text
+Đã kết nối cân
+```
+
+Nếu lỗi:
+
+```text
+Không thể kết nối cân
+```
+
+---
+
+# 3. Browser support
+
+Trước khi dùng phải check:
+
+```js
+if (!('serial' in navigator))
+```
+
+Nếu browser không hỗ trợ Web Serial thì hiển thị:
+
+```text
+Trình duyệt hiện tại không hỗ trợ kết nối cân.
+Vui lòng sử dụng Google Chrome hoặc Microsoft Edge.
+```
+
+Không để page crash.
+
+---
+
+# 4. Đọc serial stream
+
+Không giả định mỗi lần `read()` nhận đủ một dòng.
+
+Phải có buffer.
+
+Có thể sử dụng:
+
+```js
+TextDecoder
+```
+
+hoặc:
+
+```js
+TextDecoderStream
+```
+
+để decode serial bytes.
+
+Ví dụ stream có thể bị chia:
+
+```text
+G.W. :  +
+```
+
+và lần sau:
+
+```text
+   7.87 kg
+```
+
+Phải ghép buffer trước khi parse.
+
+---
+
+# 5. Parse G.W.
+
+Chỉ lấy dòng:
+
+```text
+G.W.
+```
+
+Không lấy:
+
+```text
+T.W.
+N.W.
+```
+
+Regex nên robust, ví dụ:
+
+```js
+/G\.W\.\s*:\s*([+-]?\s*\d+(?:\.\d+)?)\s*kg/i
+```
+
+Sau khi match:
+
+```js
+const weight = Number(match[1].replace(/\s/g, ''))
+```
+
+Ví dụ:
+
+```text
+G.W. :  +   7.87 kg
+```
+
+→
+
+```js
+7.87
+```
+
+Nếu:
+
+```text
+G.W. :  -   0.02 kg
+```
+
+→
+
+```js
+-0.02
+```
+
+Không crash nếu có line lạ.
+
+---
+
+# 6. Hiển thị realtime
+
+Trong UI Scan In tạo card:
+
+```text
+CÂN ĐIỆN TỬ
+
+Trọng lượng hiện tại
+
+7.87 kg
+
+● Đã kết nối
+```
+
+Số cân phải lớn, rõ, dễ nhìn.
+
+Khi cân thay đổi:
+
+```text
+7.87
+→
+8.25
+```
+
+UI phải update realtime mà không reload trang.
+
+---
+
+# 7. Trạng thái cân
+
+Có các state:
+
+```text
+Chưa kết nối
+Đang kết nối
+Đã kết nối
+Mất kết nối
+Lỗi kết nối
+```
+
+Không hiển thị:
+
+```text
+Đạt
+Không đạt
+```
+
+vì task này chưa kiểm tra điều kiện.
+
+---
+
+# 8. Reuse saved port nếu có thể
+
+Sau khi user đã cấp quyền COM port trước đó, có thể thử:
+
+```js
+navigator.serial.getPorts()
+```
+
+Nếu chỉ có đúng một port đã được cấp quyền thì có thể cho phép nút:
+
+```text
+Kết nối lại cân
+```
+
+mà không bắt user chọn lại từ đầu.
+
+Nhưng không tự mở port một cách nguy hiểm.
+
+Nếu chưa có permission thì dùng:
+
+```js
+requestPort()
+```
+
+---
+
+# 9. Disconnect
+
+Tạo nút hoặc logic:
+
+```text
+Ngắt kết nối
+```
+
+Khi disconnect:
+
+* cancel reader
+* release lock
+* close serial port
+* reset state
+* không để COM4 bị giữ sau khi rời trang.
+
+Khi `ScanInKTP.vue` unmount phải cleanup port và reader đúng cách.
+
+---
+
+# 10. Handle USB disconnect
+
+Lắng nghe nếu cần:
+
+```js
+navigator.serial.addEventListener('disconnect', ...)
+```
+
+Nếu người dùng rút USB:
+
+```text
+Mất kết nối cân
+```
+
+UI không crash.
+
+---
+
+# 11. COM port access denied
+
+Nếu COM4 đang bị ERP, PowerShell hoặc chương trình khác giữ thì browser có thể không mở được.
+
+Hiển thị message dễ hiểu:
+
+```text
+Không thể mở cổng cân.
+Hãy đóng ERP hoặc chương trình khác đang sử dụng cân rồi thử lại.
+```
+
+Không show stack trace kỹ thuật cho user.
+
+---
+
+# 12. Không hard-code COM4
+
+Web Serial API không chọn port bằng string `COM4`.
+
+Browser sẽ cho user chọn thiết bị.
+
+Không viết:
+
+```js
+port = 'COM4'
+```
+
+trong production code.
+
+`COM4` chỉ là thông tin debug/thực tế trên máy hiện tại.
+
+---
+
+# 13. Không làm backend
+
+Task này không cần thêm:
+
+* router backend
+* controller
+* service
+* API đọc cân
+* WebSocket backend
+* database.
+
+Toàn bộ đọc cân nằm phía frontend.
+
+---
+
+# 14. Không làm validation
+
+Tuyệt đối chưa implement:
+
+```text
+sgw
+rgw comparison
+Gram
+tolerance
+production quantity
+FirstInCheck
+ScanCheck
+```
+
+Dù ERP cũ có logic này.
+
+Chỉ lấy:
+
+```text
+actualWeight
+```
+
+và hiển thị.
+
+---
+
+# 15. Không ghi YWCP
+
+Không update:
+
+```text
+YWCP.rgw
+YWCP.SB
+YWCP.INCS
+YWCP.INDATE
+YWCP.LastInDate
+YWCP.INUSER
+YWCP.KCBH
+YWCP.KVBH
+```
+
+Không gọi API Scan In thật.
+
+---
+
+# 16. Tách code hợp lý
+
+Nếu `ScanInKTP.vue` đang lớn, có thể tách composable:
+
+```text
+useScaleSerial.js
+```
+
+với các state/function:
+
+```text
+currentWeight
+scaleConnected
+scaleConnecting
+scaleError
+
+connectScale()
+disconnectScale()
+startReading()
+parseWeight()
+```
+
+Nhưng không over-engineer.
+
+---
+
+# 17. Test
+
+Sau khi làm xong test các trường hợp:
+
+### Test 1
+
+Chrome/Edge mở trang:
+
+```text
+Chưa kết nối cân
+```
+
+### Test 2
+
+Bấm:
+
+```text
+Kết nối cân
+```
+
+chọn:
+
+```text
+Prolific USB-to-Serial
+```
+
+### Test 3
+
+Cân đang hiển thị:
+
+```text
+7.87 kg
+```
+
+Web phải hiển thị:
+
+```text
+7.87 kg
+```
+
+### Test 4
+
+Đặt thêm vật:
+
+```text
+7.87 → 8.50
+```
+
+web update realtime.
+
+### Test 5
+
+Rút USB:
+
+```text
+Mất kết nối cân
+```
+
+### Test 6
+
+ERP đang giữ COM port:
+
+web báo không mở được cân, không crash.
+
+---
+
+# 18. Sau khi hoàn thành
+
+Báo cáo:
+
+### Files modified
+
+Liệt kê file sửa.
+
+### Files created
+
+Liệt kê file mới nếu có.
+
+### Serial flow
+
+```text
+JWI-700W
+→ USB Serial
+→ Web Serial API
+→ parse G.W.
+→ currentWeight
+→ ScanInKTP.vue
+```
+
+### Parser example
+
+```text
+G.W. :  +   7.87 kg
+→
+7.87 kg
+```
+
+### Verification
+
+Xác nhận:
+
+* đọc cân trực tiếp trong browser
+* không có agent
+* không dùng backend để đọc COM
+* chưa validation
+* chưa ghi YWCP.
+
+

@@ -1,0 +1,354 @@
+# Prompt cho Codex – Hoàn thiện dữ liệu/điều kiện Scan In KTP, chỉ SELECT, tuyệt đối không ghi DB
+
+Hãy đọc kỹ source project hiện tại và file code ERP `scanin.txt` tôi gửi kèm.
+
+Mục tiêu task này:
+
+> Hoàn thiện luồng Scan In KTP trên web đến mức lấy được đầy đủ thông tin cần thiết và kiểm tra/hiển thị các điều kiện giống ERP cũ, nhưng CHỈ ĐƯỢC SELECT dữ liệu.
+
+## Phạm vi được phép
+
+Được phép:
+
+* đọc và phân tích `scanin.txt`
+* đọc source Warehouse hiện tại
+* thêm API backend cần thiết
+* thêm service/query cần thiết
+* dùng `SELECT`
+* join các bảng ERP cần thiết
+* lấy thông tin carton
+* lấy thông tin đơn hàng
+* lấy `sgw`
+* lấy dữ liệu cần để tính `Gram`
+* lấy trọng lượng thực tế từ cân mà frontend đã kết nối
+* lấy dữ liệu sản lượng công đoạn Gò
+* lấy dữ liệu kiểm tra vật tư
+* lấy các dữ liệu khác mà ERP cũ đang dùng để quyết định có cho Scan In hay không
+* hiển thị kết quả các điều kiện lên `ScanInKTP.vue`
+
+## Tuyệt đối cấm ghi dữ liệu
+
+Trong task này tuyệt đối KHÔNG được có:
+
+```sql
+INSERT
+UPDATE
+DELETE
+MERGE
+```
+
+Không được gọi stored procedure hoặc API nào có khả năng ghi dữ liệu.
+
+Không sửa dữ liệu `YWCP`.
+
+Không cập nhật:
+
+```text
+SB
+CKBH
+DepNO
+KCBH
+KVBH
+INCS
+INDATE
+LastInDate
+INUSER
+rgw
+RECS
+REDATE
+```
+
+hay bất kỳ field nào khác.
+
+Nếu trong code ERP có đoạn UPDATE/INSERT thì chỉ dùng để **hiểu nghiệp vụ**, không port phần đó sang web.
+
+---
+
+# Luồng cần hoàn thiện
+
+Người dùng:
+
+```text
+Scan CARTONBAR
+→ lấy thông tin carton
+→ đọc cân thực tế
+→ lấy trọng lượng chuẩn
+→ lấy dữ liệu điều kiện
+→ chạy các phép kiểm tra
+→ hiển thị toàn bộ kết quả
+→ KHÔNG cho submit nhập kho thật
+```
+
+## Thông tin carton cần lấy
+
+Ít nhất phải có:
+
+```text
+CARTONBAR
+DDBH
+CARTONNO
+XH
+Qty
+SB
+CKBH
+KCBH
+KVBH
+INCS
+INDATE
+LastInDate
+sgw
+rgw
+LPNBarCode
+```
+
+và các field khác nếu ERP cũ cần cho validation.
+
+Nếu người dùng scan `LPNBarcode`, hãy tham khảo ERP cũ để resolve về đúng `CARTONBAR`.
+
+---
+
+# Điều kiện
+
+Hãy dùng `scanin.txt` làm nguồn tham khảo chính.
+
+Không cần port Delphi 1:1.
+
+Hãy bóc nghiệp vụ ra thành các validation rõ ràng.
+
+Ít nhất cần chuẩn bị các nhóm sau:
+
+### 1. Carton hợp lệ
+
+* carton có tồn tại hay không
+* barcode/LPN resolve đúng hay không
+* carton có đang ở trạng thái phù hợp để Scan In hay không
+* có bị scan trùng trong session hiện tại hay không
+
+### 2. Thông tin trọng lượng chuẩn
+
+Lấy:
+
+```text
+sgw
+```
+
+Nếu ERP cũ cần thêm `Gram` thì query đúng nguồn ERP cũ đang dùng.
+
+Tham khảo `GetWeight()` và `GetB1Weight()` trong `scanin.txt`.
+
+### 3. Trọng lượng thực tế
+
+Dùng số cân frontend đang đọc từ cân Jadever.
+
+Hiện đang lấy `G.W.`.
+
+Chỉ hiển thị và dùng để tính validation.
+
+Không lưu `rgw` xuống DB.
+
+### 4. Kiểm tra trọng lượng
+
+Tham khảo đúng logic ERP cũ.
+
+Không tự phát minh tolerance mới.
+
+Nếu có khác biệt theo nhà máy như VB1/VB7 thì giữ logic đó nếu source hiện tại có đủ thông tin để xác định.
+
+Kết quả trả về dạng rõ ràng, ví dụ:
+
+```json
+{
+  "standardWeight": 7.90,
+  "actualWeight": 7.87,
+  "tolerance": 0.12,
+  "passed": true,
+  "message": ""
+}
+```
+
+### 5. Kiểm tra sản lượng công đoạn Gò
+
+Tham khảo:
+
+```text
+FirstInCheck
+ScanCheck
+Load_CheckCartonbarTonghop
+```
+
+trong ERP cũ.
+
+Lấy đủ dữ liệu để biết:
+
+```text
+sản lượng Gò hoàn thành
+đã nhập KTP
+số lượng carton hiện tại
+số lượng sau khi tính carton hiện tại
+```
+
+và trả về:
+
+```text
+passed / failed
+```
+
+Chỉ SELECT.
+
+### 6. Kiểm tra vật tư
+
+Tham khảo:
+
+```text
+CheckIsYPCP_CheckKCLLS
+```
+
+Không cần copy nguyên SQL nếu có thể viết lại sạch hơn.
+
+Mục tiêu là lấy được trạng thái:
+
+```text
+đủ vật tư / chưa đủ vật tư
+```
+
+và thông tin nguyên nhân cần hiển thị.
+
+Chỉ SELECT.
+
+---
+
+# API
+
+Có thể thiết kế API theo cách phù hợp project hiện tại.
+
+Ưu tiên một API tổng hợp để frontend không phải gọi quá nhiều request.
+
+Ví dụ:
+
+```text
+GET /warehouse-ktp/scan-in/carton/:barcode
+```
+
+hoặc endpoint phù hợp convention hiện tại.
+
+API trả về dữ liệu kiểu:
+
+```json
+{
+  "carton": {},
+  "weightRule": {},
+  "productionCheck": {},
+  "materialCheck": {},
+  "canScanIn": false
+}
+```
+
+`canScanIn` ở đây chỉ là kết quả validation lý thuyết.
+
+KHÔNG có API submit.
+
+KHÔNG có endpoint POST Scan In ở task này.
+
+Nếu endpoint POST Scan In đã tồn tại dạng placeholder thì không được nối nó vào UI.
+
+---
+
+# Frontend
+
+Trên `ScanInKTP.vue`:
+
+Sau khi scan carton, hiển thị đầy đủ:
+
+```text
+Thông tin carton
+Thông tin đơn hàng
+Trọng lượng chuẩn
+Trọng lượng thực tế
+Sai lệch
+Kiểm tra sản lượng
+Kiểm tra vật tư
+Các trạng thái khác lấy từ ERP
+```
+
+Mỗi điều kiện nên có trạng thái:
+
+```text
+Đạt
+Không đạt
+Chưa có dữ liệu
+```
+
+Nếu điều kiện không đạt, hiển thị lý do rõ ràng.
+
+---
+
+# Nút nhập kho
+
+Nút:
+
+```text
+XÁC NHẬN NHẬP KHO
+```
+
+phải luôn KHÔNG thực hiện ghi DB trong task này.
+
+Có thể:
+
+* disable hoàn toàn
+
+hoặc khi click chỉ báo:
+
+```text
+Chức năng ghi nhập kho chưa được kích hoạt.
+```
+
+Nhưng ưu tiên disable.
+
+Dù tất cả điều kiện đều đạt:
+
+```text
+canScanIn = true
+```
+
+vẫn KHÔNG được gửi request ghi dữ liệu.
+
+---
+
+# Yêu cầu quan trọng về database
+
+Sau khi hoàn thành, hãy tự rà soát toàn bộ diff.
+
+Đảm bảo trong phần code mới của task này không có:
+
+```text
+INSERT
+UPDATE
+DELETE
+MERGE
+ExecSQL ghi dữ liệu
+Save
+Create
+Upsert
+```
+
+hoặc bất kỳ thao tác mutation DB nào.
+
+Nếu cần query dữ liệu thì chỉ dùng `SELECT`.
+
+---
+
+# Không làm ngoài phạm vi
+
+Không:
+
+* Scan Out
+* sửa Move Order
+* sửa realtime KTP
+* migration DB
+* thêm bảng
+* thay đổi schema
+* ghi log nghiệp vụ vào database
+* port toàn bộ ERP cũ một cách máy móc
+
+---
+

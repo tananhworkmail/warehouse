@@ -1,0 +1,70 @@
+Luồng chính khi quét một carton trong Edit3KeyPress là: xác định đúng CARTONBAR (có hỗ trợ trường hợp quét LPNBarcode), kiểm tra carton có tồn tại, kiểm tra có bị quét trùng trong phiên hiện tại hay không, lấy DDBH, XH, sgw, rồi mới chạy các kiểm tra tiếp theo.
+
+Những điều kiện đã xác định được từ code ERP gồm:
+
+Carton phải tồn tại và không được scan trùng
+Nếu carton đã nằm trong danh sách đang scan thì ERP beep và hủy.
+Có logic đổi từ LPNBarcode về CARTONBAR nếu cần.
+Không được lẫn đơn hàng
+ERP giữ RYEdit cho đơn hiện tại.
+Nếu carton mới thuộc RY khác thì cảnh báo và hỏi có đổi đơn hay không.
+Phải có trọng lượng chuẩn carton sgw
+Nếu sgw = 0 thì chặn ngay:
+"Khong co trong luong tieu chuan thung".
+Phải lấy được dung sai Gram
+Nhà máy bình thường: ERP query YWXXNew.NWeigh * 1.04.
+Riêng VB1/VB7: dùng round(sgw * 0.03, 3).
+Nếu Gram = 0 thì chặn.
+Phải đọc được cân thật
+ERP đọc G.W. từ COM và lưu vào rgw.
+Nếu rgw = 0 thì báo "Khong can duoc" và không cho nhập.
+Kiểm tra trọng lượng
+
+Với VB1/VB7:
+
+abs(sgw - rgw) > Gram / 3
+
+thì cảnh báo vượt giới hạn.
+
+Với các nhà máy khác:
+
+(sgw - rgw) > Gram / 3
+
+tức chủ yếu chặn trường hợp carton nhẹ hơn chuẩn quá mức.
+
+Có cơ chế override khi thiếu cân
+Một số trường hợp nhà máy PD có thể mở dialog xác nhận để người có quyền cho phép nhập dù cân nhẹ.
+Nếu không xác thực được INUserID thì vẫn bị chặn.
+Kiểm tra số lượng sản xuất công đoạn Gò
+ERP lấy số hoàn thành từ SMDDSS, nhóm theo size/XXCC.
+Tính Aqty.
+So với lượng đã Scan In.
+Nếu lượng Scan In vượt lượng Gò hoàn thành thì chặn.
+Có kiểm tra bổ sung tổng hợp carton/sản lượng
+Đoạn mới Load_CheckCartonbarTonghop(...) còn chạy thêm kiểm tra tổng hợp sau ScanCheck.
+Nếu không đạt thì ERP hiển thị từng đơn/size với số Gò scan và số bên Scan In rồi abort.
+Có kiểm tra vật tư đã cấp đủ
+CheckIsYPCP_CheckKCLLS(...).
+Nếu vật tư đơn hàng chưa lãnh/cấp đủ thì không cho thành phẩm nhập kho.
+
+Sau khi tất cả điều kiện đạt, ERP mới chuẩn bị dữ liệu nhập kho:
+
+SB         = 1
+KCBH       = mã khu/kho
+CKBH       = kho
+KVBH       = kệ
+rgw        = trọng lượng thực tế
+INUSER     = người nhập
+LastInDate = thời gian hiện tại
+
+Nếu nhập lần đầu thì:
+
+INCS   = 1
+INDATE = thời gian hiện tại
+
+Nếu đã từng nhập thì:
+
+INCS   = INCS + 1
+INDATE = giữ ngày nhập lần đầu
+
+Và lúc upload thật, ERP UPDATE YWCP theo CARTONBAR, cập nhật các field SB, CKBH, DepNo, KCBH, KVBH, INCS, INDATE, LastInDate, rgw, INUser; nếu trạng thái cũ là 2/4 thì còn tăng RECS và cập nhật REDATE.
